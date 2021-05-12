@@ -52,7 +52,7 @@ const char* topic = "Mbed";
 
 Thread wifi_thread;
 Thread mqtt_thread;
-Thread tilt_thread;
+Thread ACC_thread;
 Thread clf_thread(osPriorityNormal, 8 * 1024);
 EventQueue queue(32 * EVENTS_EVENT_SIZE);
 
@@ -183,7 +183,7 @@ void ACC(Arguments *in, Reply *out)
     out->putData(buff);
 }
 
-void tilt_angle(MQTT::Client<MQTTNetwork, Countdown>* client)
+void get_ACC(MQTT::Client<MQTTNetwork, Countdown>* client)
 {
     int i = 0, j = 0, k = 0;
     while(1) {
@@ -415,7 +415,7 @@ void wifi_set()
     /*-------------Start thread------------*/
 
     mqtt_thread.start(callback(&queue, &EventQueue::dispatch_forever));
-    tilt_thread.start(callback(&tilt_angle, &client));
+    ACC_thread.start(callback(&get_ACC, &client));
     btn2.rise(queue.event(&publish_gesture_event, &client));
     //btn3.rise(&close_mqtt);
 
