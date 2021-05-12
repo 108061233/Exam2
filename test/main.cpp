@@ -35,13 +35,12 @@ DigitalOut myled2(LED2);
 DigitalOut myled3(LED3);
 // RPC
 BufferedSerial pc(USBTX, USBRX);
-void tilt(Arguments *in, Reply *out);
-void UI(Arguments *in, Reply *out);
-RPCFunction rpctilt(&tilt, "tilt");
-RPCFunction rpcUI(&UI, "UI");
-int mode1, mode2;
+void ACC(Arguments *in, Reply *out);
+RPCFunction rpcACC(&ACC, "ACC");
+int mode;
 
-float angle, angle_dis;
+float angle;
+int ID = -1, tr = 0, X[500], Y[500], Z[500];
 int16_t DataXYZ[3] = {0};
 //InterruptIn btn3(SW3);
 volatile int message_num = 0;
@@ -53,7 +52,7 @@ const char* topic = "Mbed";
 Thread wifi_thread;
 Thread mqtt_thread;
 Thread tilt_thread;
-Thread UI_thread(osPriorityNormal, 8 * 1024);
+Thread clf_thread(osPriorityNormal, 8 * 1024);
 EventQueue queue(32 * EVENTS_EVENT_SIZE);
 
 #define label_num 3
@@ -138,12 +137,12 @@ int PredictGesture(float* output) {
     return this_predict;
 }
 
-void LCD(float angle_dis)
+void LCD(int ID)
 {
     uLCD.text_width(4);
     uLCD.text_height(4);
     uLCD.locate(0,0);
-    uLCD.printf("%.2f", angle_dis);
+    uLCD.printf("ID: %d", ID);
 }
 
 void messageArrived(MQTT::MessageData& md) {
@@ -158,10 +157,10 @@ void messageArrived(MQTT::MessageData& md) {
     ++arrivedcount;
 }
 
-void publish_sel_angle(MQTT::Client<MQTTNetwork, Countdown>* client) {
+void publish_gesture_event(MQTT::Client<MQTTNetwork, Countdown>* client) {
     MQTT::Message message;
     char buf[100];
-    sprintf(buf, "The bound angle %.2f", angle_dis);
+    sprintf(buf, "ID: %d", ID);
     message.qos = MQTT::QOS0;
     message.retained = false;
     message.dup = false;
@@ -170,54 +169,60 @@ void publish_sel_angle(MQTT::Client<MQTTNetwork, Countdown>* client) {
     int rc = client->publish(topic, message);
 }
 
-void tilt(Arguments *in, Reply *out)
+void ACC(Arguments *in, Reply *out)
 {
     // In this scenario, when using RPC delimit the two arguments with a space.
-    mode1 = in->getArg<int>();
+    const char *tmp = in->getArg<const char*>();
+    if (*tmp == 's')
+        mode = 1;
+    else
+        mode = 0;
     char buff[200];
-    sprintf(buff, "%d", mode1);
-    out->putData(buff);
-}
-
-void UI(Arguments *in, Reply *out)
-{
-    // In this scenario, when using RPC delimit the two arguments with a space.
-    mode2 = in->getArg<int>();
-    char buff[200];
-    sprintf(buff, "%d", mode2);
+    sprintf(buff, "%d", mode);
     out->putData(buff);
 }
 
 void tilt_angle(MQTT::Client<MQTTNetwork, Countdown>* client)
 {
-   while(1) {
-      if (mode1) {
-        myled2 = !myled2;
-        BSP_ACCELERO_Init();
-        BSP_ACCELERO_AccGetXYZ(DataXYZ);
-        float x = sqrt(DataXYZ[0] * DataXYZ[0]);
-        float y = sqrt(DataXYZ[1] * DataXYZ[1]);
-        float z = sqrt(DataXYZ[2] * DataXYZ[2]);
+    int i = 0, j = 0, k = 0;
+    while(1) {
+        if (mode) {
+            myled2 = !myled2;
+            BSP_ACCELERO_Init();
+            BSP_ACCELERO_AccGetXYZ(DataXYZ);
+            if (i < 500) {
+                X[i++] = DataXYZ[0]; Y[j++] = DataXYZ[0]; Z[k++] = DataXYZ[0];
+            }
 
-        angle = atan(sqrt(x * x + y * y) / z) * 180 / 3.14;
+            float x = sqrt(DataXYZ[0] * DataXYZ[0]);
+            float y = sqrt(DataXYZ[1] * DataXYZ[1]);
+            float z = sqrt(DataXYZ[2] * DataXYZ[2]);
 
-        if (angle > 1.0) myled1 = 0;
-        else myled1 = 1;
+            angle = atan(sqrt(x * x + y * y) / z) * 180 / 3.14;
 
-        if (angle > angle_dis) {
-            MQTT::Message message;
-            char buff[30];
-            sprintf(buff, "angle: %.2f", angle);
-            message.qos = MQTT::QOS0;
-            message.retained = false;
-            message.dup = false;
-            message.payload = (void*) buff;
-            message.payloadlen = strlen(buff) + 1;
-            int rc = client->publish(topic, message);
-        }
-        LCD(angle);
-        ThisThread::sleep_for(100ms);
-      } else myled2 = 0;      
+            if (angle > 1.0) myled1 = 0;
+            else myled1 = 1;
+
+            if (tr) {
+                for (int n = 0; n < i;) {
+                    MQTT::Message message;
+                    char buff[100];
+                    sprintf(buff, "ID: %d  event: x: %d, y: %d, z: %d", ID, X[n], Y[n], Z[n]);
+                    message.qos = MQTT::QOS0;
+                    message.retained = false;
+                    message.dup = false;
+                    message.payload = (void*) buff;
+                    message.payloadlen = strlen(buff) + 1;
+                    int rc = client->publish(topic, message);
+                    n += i / 20;
+                }
+                tr = 0;
+            }
+            ThisThread::sleep_for(100ms);
+        } else {
+            myled2 = 0;
+            i = 0; j = 0; k = 0;
+        }      
    }
 }
 
@@ -225,7 +230,7 @@ void close_mqtt() {
     closed = true;
 }
 
-void angle_sel()
+void gesture_clf()
 {
     /*-------------TF set------------*/
 
@@ -300,7 +305,7 @@ void angle_sel()
     error_reporter->Report("Set up successful...\n");
 
     while (true)
-        if (mode2) {
+        if (mode) {
             myled3 = !myled3;
             // Attempt to read new data from the accelerometer
             got_data = ReadAccelerometer(error_reporter, model_input->data.f,
@@ -329,16 +334,18 @@ void angle_sel()
             // Produce an output
             if (gesture_index < label_num) {
                 error_reporter->Report(config.output_message[gesture_index]);
-                if (gesture_index == 0) 
-                    if (angle_dis == 80) angle_dis = 0;
-                    else angle_dis += 20;
-                else if (gesture_index == 1) angle_dis = 40;
-                else if (gesture_index == 2) angle_dis = 60;
-                else angle_dis = 0;
-            
+                if (gesture_index == 0) {
+                    ID = 0;
+                    tr = 1;
+                } else if (gesture_index == 1) {
+                    ID = 1;
+                    tr = 1;
+                } else if (gesture_index == 2) {
+                    ID = 2;
+                    tr = 1;
+                }
             }
-            LCD(angle_dis);
-            ThisThread::sleep_for(100ms);
+            LCD(ID);
         } else myled3 = 0;
 }
 
@@ -405,7 +412,7 @@ void wifi_set()
 
     mqtt_thread.start(callback(&queue, &EventQueue::dispatch_forever));
     tilt_thread.start(callback(&tilt_angle, &client));
-    btn2.rise(queue.event(&publish_sel_angle, &client));
+    btn2.rise(queue.event(&publish_gesture_event, &client));
     //btn3.rise(&close_mqtt);
 
     /*-------------WIFI------------*/
@@ -431,7 +438,7 @@ void wifi_set()
 }
 
 int main() {
-    UI_thread.start(&angle_sel);
+    clf_thread.start(&gesture_clf);
     wifi_thread.start(&wifi_set);
 
     BSP_ACCELERO_Init();
