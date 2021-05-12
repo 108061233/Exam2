@@ -40,7 +40,8 @@ RPCFunction rpcACC(&ACC, "ACC");
 int mode;
 
 float angle;
-int ID = -1, tr = 0, X[500], Y[500], Z[500];
+int ID = 0, tr = 0, X[500], Y[500], Z[500];
+int f_x[500], f_z[500];
 int16_t DataXYZ[3] = {0};
 //InterruptIn btn3(SW3);
 volatile int message_num = 0;
@@ -191,7 +192,10 @@ void tilt_angle(MQTT::Client<MQTTNetwork, Countdown>* client)
             BSP_ACCELERO_Init();
             BSP_ACCELERO_AccGetXYZ(DataXYZ);
             if (i < 500) {
-                X[i++] = DataXYZ[0]; Y[j++] = DataXYZ[0]; Z[k++] = DataXYZ[0];
+                f_x[i] = 0; f_z[i] = 0;
+                if (DataXYZ[0] > 100 || DataXYZ[0] < -100) f_x[i] = 1;
+                if (DataXYZ[2] > 1100 || DataXYZ[2] < -1100) f_z[i] = 1;
+                X[i++] = DataXYZ[0]; Y[j++] = DataXYZ[1]; Z[k++] = DataXYZ[2];
             }
 
             float x = sqrt(DataXYZ[0] * DataXYZ[0]);
@@ -207,7 +211,7 @@ void tilt_angle(MQTT::Client<MQTTNetwork, Countdown>* client)
                 for (int n = 0; n < i;) {
                     MQTT::Message message;
                     char buff[100];
-                    sprintf(buff, "ID: %d  event: x: %d, y: %d, z: %d", ID, X[n], Y[n], Z[n]);
+                    sprintf(buff, "ID: %d  event: x: %d, y: %d, z: %d Acc_x > 100: %d  Acc_z > 1100: %d", ID, X[n], Y[n], Z[n], f_x[n], f_z[n]);
                     message.qos = MQTT::QOS0;
                     message.retained = false;
                     message.dup = false;
@@ -218,7 +222,7 @@ void tilt_angle(MQTT::Client<MQTTNetwork, Countdown>* client)
                 }
                 tr = 0;
             }
-            ThisThread::sleep_for(100ms);
+            ThisThread::sleep_for(50ms);
         } else {
             myled2 = 0;
             i = 0; j = 0; k = 0;
@@ -335,13 +339,13 @@ void gesture_clf()
             if (gesture_index < label_num) {
                 error_reporter->Report(config.output_message[gesture_index]);
                 if (gesture_index == 0) {
-                    ID = 0;
-                    tr = 1;
-                } else if (gesture_index == 1) {
                     ID = 1;
                     tr = 1;
-                } else if (gesture_index == 2) {
+                } else if (gesture_index == 1) {
                     ID = 2;
+                    tr = 1;
+                } else if (gesture_index == 2) {
+                    ID = 3;
                     tr = 1;
                 }
             }
